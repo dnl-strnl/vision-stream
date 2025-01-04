@@ -1,0 +1,15 @@
+host: 0.0.0.0
+port: 5678
+model_address: http://localhost:8080/predictions/yolov8s-worldv2
+jpeg_quality: 85
+
+model_wrapper:
+  _target_: vision_stream.models.yolo.Detection
+  show_text: false
+  text_size: 0.4
+
+video_stream:
+  _target_: vision_stream.DefaultStream
+  device_id: 1
+  frame_width: 960
+  frame_height: 540

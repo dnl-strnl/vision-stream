@@ -1,0 +1,237 @@
+<head>
+    <title>Vision Stream</title>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: #ffffff;
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+
+        h1 {
+            padding: 20px;
+            margin: 0;
+            background-color: #2d2d2d;
+        }
+
+        .container {
+            display: flex;
+            padding: 20px;
+            gap: 20px;
+        }
+
+        .video-container {
+            flex: 0 0 640px;
+            position: relative;
+        }
+
+        .control-panel {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            background-color: #2d2d2d;
+            border-radius: 8px;
+        }
+
+        .status-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background-color: #363636;
+            border-radius: 8px;
+            padding: 15px;
+        }
+
+        .history-list {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .record-btn {
+            padding: 12px 24px;
+            font-size: 16px;
+            margin: 10px 0;
+            cursor: pointer;
+            background-color: #404040;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            transition: background-color 0.2s;
+        }
+
+        .record-btn:hover {
+            background-color: #505050;
+        }
+
+        .recording {
+            background-color: #dc3545;
+            color: white;
+        }
+
+        .recording:hover {
+            background-color: #c82333;
+        }
+
+        .history-item {
+            padding: 12px;
+            border-bottom: 1px solid #4a4a4a;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            color: #e0e0e0;
+        }
+
+        .history-item:hover {
+            background-color: #404040;
+        }
+
+        .history-item:last-child {
+            border-bottom: none;
+        }
+
+        .started {
+            color: #28a745;
+        }
+
+        .stopped {
+            color: #dc3545;
+        }
+
+        .live-stream-btn {
+            padding: 12px 24px;
+            font-size: 16px;
+            margin: 10px 0;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            display: none;
+            transition: background-color 0.2s;
+        }
+
+        .live-stream-btn:hover {
+            background-color: #218838;
+        }
+
+        .video-player {
+            display: none;
+            width: 640px;
+            height: 480px;
+            background-color: #000;
+        }
+
+        .stream-image {
+            width: 640px;
+            height: 480px;
+            border-radius: 8px;
+        }
+    </style>
+    <script>
+        let isLiveStream = true;
+
+        function updateHistory(history) {
+            const historyDiv = document.getElementById('recordingHistory');
+            historyDiv.innerHTML = '';
+
+            history.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'history-item';
+
+                if (item.action === 'started') {
+                    div.innerHTML = `
+                        <span class="started">▶ Started recording</span>
+                        <br>Time: ${item.time}
+                        <br>File: ${item.path}
+                    `;
+                } else {
+                    div.innerHTML = `
+                        <span class="stopped">⏹ Stopped recording</span>
+                        <br>Time: ${item.time}
+                        <br>Duration: ${item.duration} seconds
+                        <br>File: ${item.path}
+                    `;
+
+                    div.onclick = () => playRecording(item.path);
+                }
+
+                historyDiv.appendChild(div);
+            });
+        }
+
+        function toggleRecording() {
+            fetch('/record', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    const btn = document.getElementById('recordBtn');
+                    const status = document.getElementById('recordingStatus');
+
+                    if (data.status === 'recording') {
+                        btn.textContent = 'Stop Recording';
+                        btn.classList.add('recording');
+                        status.innerHTML = '<strong>Status:</strong> Recording in progress...';
+                    } else {
+                        btn.textContent = 'Start Recording';
+                        btn.classList.remove('recording');
+                        status.innerHTML = '<strong>Status:</strong> Ready';
+                    }
+
+                    updateHistory(data.history);
+                })
+                .catch(error => alert('Error: ' + error));
+        }
+
+        function playRecording(path) {
+            const streamImage = document.getElementById('streamImage');
+            const videoPlayer = document.getElementById('videoPlayer');
+            const liveStreamBtn = document.getElementById('liveStreamBtn');
+
+            streamImage.style.display = 'none';
+            videoPlayer.style.display = 'block';
+            liveStreamBtn.style.display = 'block';
+
+            videoPlayer.src = '/recordings/' + path;
+            videoPlayer.play();
+
+            isLiveStream = false;
+        }
+
+        function returnToLiveStream() {
+            const streamImage = document.getElementById('streamImage');
+            const videoPlayer = document.getElementById('videoPlayer');
+            const liveStreamBtn = document.getElementById('liveStreamBtn');
+
+            videoPlayer.pause();
+            videoPlayer.style.display = 'none';
+            streamImage.style.display = 'block';
+            liveStreamBtn.style.display = 'none';
+
+            isLiveStream = true;
+        }
+    </script>
+</head>
+<body>
+    <h1>Vision Stream</h1>
+    <div class="container">
+        <div class="video-container">
+            <img id="streamImage" class="stream-image" src="/video_feed">
+            <video id="videoPlayer" class="video-player" controls></video>
+            <button id="liveStreamBtn" class="live-stream-btn" onclick="returnToLiveStream()">
+                Return to Live Stream
+            </button>
+        </div>
+        <div class="control-panel">
+            <button id="recordBtn" class="record-btn" onclick="toggleRecording()">
+                Start Recording
+            </button>
+            <div class="status-panel">
+                <div id="recordingStatus">
+                    <strong>Status:</strong> Ready
+                </div>
+                <h3>Recording History</h3>
+                <div id="recordingHistory" class="history-list">
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
