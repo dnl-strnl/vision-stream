@@ -25,11 +25,18 @@ class StreamServer:
         jpeg_quality = 100,
         frame_buffer_maxlen = 10,
         video_dir = os.getcwd(),
+        timeline_fps = 60,
     ):
         self.video_stream = video_stream
         self.model_wrapper = model_wrapper
         self.jpeg_quality = jpeg_quality
         self.video_dir = video_dir
+        # each frame is held for as long as it actually took the pipeline to
+        # produce the next one, so playback preserves the measured per-frame
+        # timing instead of a single rate sampled when recording started.
+        self.timeline_fps = timeline_fps
+        self.session_frames = 0
+        self._tick_error = 0.0
 
         self.frame_queue = queue.Queue()
 
@@ -47,9 +54,12 @@ class StreamServer:
     def get_history(self):
         return list(self.history)
 
-    def start_recording(self, frame_size, fps=30.0):
+    def start_recording(self, frame_size):
         if self.is_recording:
             return False
+
+        self.session_frames = 0
+        self._tick_error = 0.0
 
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         filename = f'stream-{timestamp}.mp4'
@@ -62,7 +72,7 @@ class StreamServer:
             '-vcodec', 'rawvideo',
             '-s', f'{frame_size[1]}x{frame_size[0]}',
             '-pix_fmt', 'bgr24',
-            '-r', str(fps),
+            '-r', str(self.timeline_fps),
             '-i', '-',
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
@@ -104,6 +114,8 @@ class StreamServer:
             return False
 
         self.is_recording = False
+        # session ends when the user stops, not after the flush.
+        stop_time = time.time()
 
         while not self.frame_queue.empty():
             time.sleep(0.1)
@@ -118,31 +130,50 @@ class StreamServer:
             except subprocess.TimeoutExpired:
                 self.process.kill()
 
-        session_duration = time.time() - self.session_start
+        session_duration = stop_time - self.session_start
         filename = os.path.basename(self.video_path)
+        mean_fps = self.session_frames / session_duration if session_duration > 0 else 0.0
 
         self.history.append({
             'action': 'stopped',
             'path': filename,
             'duration': f'{session_duration:.2f}',
+            'frames': self.session_frames,
+            'mean_fps': f'{mean_fps:.2f}',
             'time': time.strftime('%H:%M:%S')
         })
 
         return {
             'path': filename,
-            'duration': f'{session_duration:.2f}'
+            'duration': f'{session_duration:.2f}',
+            'frames': self.session_frames,
+            'mean_fps': f'{mean_fps:.2f}',
         }
 
+    def _hold(self, frame_bytes, seconds):
+        # the video is fixed-rate, so repeat the frame to fill the time it was
+        # on screen. Rounding error carries over so total length stays exact.
+        exact = seconds * self.timeline_fps + self._tick_error
+        ticks = max(1, round(exact))
+        self._tick_error = exact - ticks
+        for _ in range(ticks):
+            self.process.stdin.write(frame_bytes)
+
     def _write_frames(self):
-        while self.is_recording:
-            try:
-                frame = self.frame_queue.get(timeout=1.0)
-                self.process.stdin.write(frame.tobytes())
-            except queue.Empty:
-                continue
-            except Exception as frame_write_exception:
-                print(f"{frame_write_exception=}")
-                break
+        pending = None  # (frame_bytes, wall_clock_time) of the last frame seen
+        try:
+            while self.is_recording or not self.frame_queue.empty():
+                try:
+                    frame, frame_time = self.frame_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if pending is not None:
+                    self._hold(pending[0], frame_time - pending[1])
+                pending = (frame.tobytes(), frame_time)
+            if pending is not None:
+                self._hold(pending[0], 0.0)  # final frame: one tick
+        except Exception as frame_write_exception:
+            print(f"{frame_write_exception=}")
 
     def _setup_routes(self):
         @self.app.route('/')
@@ -195,12 +226,7 @@ class StreamServer:
                 if frame is None:
                     return jsonify({'error': 'No frame available.'}), 400
 
-                success = self.start_recording(
-                    frame_size=frame.shape,
-                    fps=self.video_stream.true_fps if \
-                        hasattr(self.video_stream, 'true_fps') else \
-                        self.video_stream.fps
-                )
+                success = self.start_recording(frame_size=frame.shape)
 
                 return jsonify({
                     'status': 'recording' if success else 'error',
@@ -223,7 +249,8 @@ class StreamServer:
             )
 
             if self.is_recording:
-                self.frame_queue.put(frame)
+                self.frame_queue.put((frame, time.time()))
+                self.session_frames += 1
 
             frame_header = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
             yield frame_header + buffer.tobytes() + b"\r\n"

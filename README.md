@@ -28,4 +28,4 @@ Users can record sessions while maintaining the actual processing frame rate, pr
   </br>
 </p>
 
-Instead of relying on nominal camera FPS, the recordings measure and use the actual frame rate experienced after model inference, ensuring recordings accurately reflect the true performance of your system. This means your recorded videos will play back at exactly the speed they were processed, providing an authentic representation of model latency and performance.
+Instead of relying on nominal camera FPS, recordings are written at a fixed 60 fps and each frame is repeated for as long as it was actually on screen after model inference. A slow frame stays up longer and a fast one shorter, so your recorded videos play back at exactly the speed they were processed, providing an authentic representation of model latency and performance.
